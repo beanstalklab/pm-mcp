@@ -1,0 +1,20 @@
+{
+  "base_url": "https://192.168.66.86:8618",
+  "views": {
+    "All Projects": "/tms_pm/Project/Milestones",
+    "My Projects": "/tms_pm/Project?Mine=true",
+    "All Tasks": "/tms_pm/Issue",
+    "My Tasks": "/tms_pm/Issue?Mine=true",
+    "All Time spent": "/tms_pm/Worklog",
+    "My Time spent": "/tms_pm/Worklog?UIds=ecc98c6f-11d4-4e21-8e80-b6b91eea6b7f",
+    "All Task Comments": "/tms_pm/Comment",
+    "Project list": "/tms_pm/Project",
+    "Project activities": "/tms_pm/ProjectActivity",
+    "Projects Gantt": "/tms_pm/Gantt/Project",
+    "Resources Gantt": "/tms_pm/Gantt/Resource",
+    "Sprints": "/tms_pm/Sprint",
+    "User stories": "/tms_pm/UserStory",
+    "Favorite Views": "/tms_pm/PmFavorite",
+    "Html Documents": "/tms_pm/HtmlDocument"
+  }
+}

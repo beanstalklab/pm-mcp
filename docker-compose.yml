@@ -1,0 +1,20 @@
+services:
+  mcp-server:
+    build: .
+    image: tms-pm-mcp
+    container_name: tms-pm-mcp
+    # 'stdin_open' keeps the stdio open which is mandatory for MCP!
+    stdin_open: true
+    tty: false
+    env_file:
+      - .env
+    volumes:
+      - ./config.json:/app/config.json
+      # (Optional) Mount your local directory for development/hot-reloading
+      # - .:/app
+
+    # Note: If you want to run the Inspector web interface instead of generic standard I/O:
+    # Just uncomment the command below, and map port 5173
+    # command: ["npx", "-y", "@modelcontextprotocol/inspector", "uv", "run", "main.py"]
+    # ports:
+    #   - "5173:5173"
