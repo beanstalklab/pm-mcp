@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "pm-mcp": {
+      "command": "/home/hungdm/miniconda3/bin/uv",
+      "args": [
+        "run",
+        "--project",
+        "/mnt/01D5E79859B75510/workspace/labs/PM_MCP",
+        "/mnt/01D5E79859B75510/workspace/labs/PM_MCP/main.py"
+      ]
+    }
+  }
+}

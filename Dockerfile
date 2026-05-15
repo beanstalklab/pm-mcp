@@ -1,9 +1,5 @@
 FROM python:3.12-slim
 
-# Set environment variables for Python
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
-
 # Set working directory
 WORKDIR /app
 

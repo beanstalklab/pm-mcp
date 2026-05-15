@@ -2,11 +2,32 @@ import os
 import re
 import logging
 import asyncio
+from datetime import datetime
 from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 from playwright.async_api import async_playwright, BrowserContext
 
 logger = logging.getLogger(__name__)
+
+def _normalize_date(date_str: str) -> str:
+    """Convert various date formats to DD/Mon/YYYY (e.g., 20/Apr/2026) as expected by TMS."""
+    if not date_str:
+        return date_str
+    formats = [
+        "%d/%m/%Y",      # 20/04/2026
+        "%Y-%m-%d",      # 2026-04-20
+        "%d-%m-%Y",      # 20-04-2026
+        "%d/%b/%Y",      # 20/Apr/2026 (already correct)
+        "%d-%b-%Y",      # 20-Apr-2026
+    ]
+    for fmt in formats:
+        try:
+            dt = datetime.strptime(date_str, fmt)
+            return dt.strftime("%d/%b/%Y")  # -> 20/Apr/2026
+        except ValueError:
+            continue
+    # If no format matched, return as-is
+    return date_str
 
 async def setup_browser_context(p, base_url: str) -> BrowserContext:
     """Sets up an incognito browser context with cookies from environment."""
@@ -52,7 +73,8 @@ def extract_tables_as_markdown(html_content: str) -> str:
         '[id*="project-quickview-detail" i]',
         '[id*="project-info" i]',
         '[id*="overview" i]',
-        '.card'
+        '.card',
+        '.card-body'
     ]
     
     for selector in selectors:
@@ -151,6 +173,7 @@ async def fetch_page_markdown(url: str, base_url: str) -> str:
         except Exception as e:
             logger.error(f"Error fetching page {url}: {e}")
             return f"Error fetching page: {str(e)}"
+        finally:
             await context.close()
 
 async def add_comment_action(url: str, base_url: str, comment: str) -> str:
@@ -239,14 +262,17 @@ async def log_time_action(url: str, base_url: str, hours: float, work_notes: str
             await page.goto(url, wait_until='networkidle', timeout=30000)
             await page.wait_for_timeout(2000)
             
-            # Switch to time spent tab if exists
+            # Switch to Time Spent tab if exists
             tab = page.get_by_role("tab", name=re.compile("Time Spent", re.IGNORECASE))
             if await tab.count() > 0:
                 await tab.first.click()
                 await page.wait_for_timeout(1000)
                 
-            # Click Log time/Edit time spent icon
-            log_btn = page.locator("[title='Edit time spent'], [title='Log time']")
+            # Click "Log time (on/off)" link to open the log time form
+            log_btn = page.get_by_role("link", name=re.compile("Log time", re.IGNORECASE))
+            if await log_btn.count() == 0:
+                # Fallback: try title-based selector
+                log_btn = page.locator("[title='Edit time spent'], [title='Log time']")
             if await log_btn.count() == 0:
                 log_btn = page.get_by_text("Log time", exact=False)
                 
@@ -254,25 +280,33 @@ async def log_time_action(url: str, base_url: str, hours: float, work_notes: str
                 await log_btn.first.click()
                 await page.wait_for_timeout(1000)
             
-            if date:
-                date_input = page.get_by_role("textbox", name=re.compile("Log to date", re.IGNORECASE))
-                if await date_input.count() > 0:
-                    await date_input.fill(date)
-            
-            notes_input = page.get_by_role("textbox", name=re.compile("Work notes", re.IGNORECASE))
-            if await notes_input.count() > 0:
-                await notes_input.fill(work_notes)
-            
+            # Fill hours first (matches form layout order)
             time_input = page.get_by_role("spinbutton", name=re.compile("Time spent", re.IGNORECASE))
             if await time_input.count() > 0:
                 await time_input.fill(str(hours))
+            
+            # Fill date if provided (input is READONLY, remove it first then fill)
+            if date:
+                date = _normalize_date(date)
+                date_input = page.locator("#Worklog_LogTime")
+                if await date_input.count() > 0:
+                    await date_input.evaluate("el => el.removeAttribute('readonly')")
+                    await date_input.fill(date)
+            
+            # Fill work notes
+            notes_input = page.get_by_role("textbox", name=re.compile("Work notes", re.IGNORECASE))
+            if await notes_input.count() > 0:
+                await notes_input.fill(work_notes)
                 
-            save_btn = page.get_by_role("button", name=re.compile("Save", re.IGNORECASE))
-            if await save_btn.count() > 0:
-                await save_btn.first.click()
+            # Save is a LINK (not a button) in this form
+            save_link = page.get_by_role("link", name=re.compile("Save", re.IGNORECASE))
+            if await save_link.count() > 0:
+                await save_link.first.click()
             else:
-                # Try locating form submit
-                await page.locator("form").get_by_role("button").first.click()
+                # Fallback to button
+                save_btn = page.get_by_role("button", name=re.compile("Save", re.IGNORECASE))
+                if await save_btn.count() > 0:
+                    await save_btn.first.click()
                 
             await page.wait_for_timeout(2000)
             return f"Logged {hours} hours successfully."
@@ -282,7 +316,10 @@ async def log_time_action(url: str, base_url: str, hours: float, work_notes: str
         finally:
             await context.close()
 
-async def create_task_action(project_url: str, base_url: str, title: str, description: str = "") -> str:
+async def create_task_action(project_url: str, base_url: str, title: str, description: str = "", 
+                             start_date: str = None, due_date: str = None, estimate_hours: float = None,
+                             workflow: str = None, task_type: str = None, assign_to: str = None,
+                             milestone: str = None) -> str:
     """Creates a new task in a project."""
     async with async_playwright() as p:
         context = await setup_browser_context(p, base_url)
@@ -292,25 +329,122 @@ async def create_task_action(project_url: str, base_url: str, title: str, descri
             await page.goto(project_url, wait_until='networkidle', timeout=30000)
             await page.wait_for_timeout(2000)
             
-            # Click New * button (New Development, New Task, etc.)
-            new_btn = page.get_by_role("link", name=re.compile("New\\s+(Development|Task|Bug|Issue)", re.IGNORECASE))
+            # Step 1: Click "New task" text to open the dropdown menu
+            new_task_trigger = page.get_by_text("New task", exact=True)
+            if await new_task_trigger.count() > 0:
+                await new_task_trigger.click()
+                await page.wait_for_timeout(1000)
+            
+            # Step 2: Click "New Development" (or New Task/Bug) from the dropdown
+            new_btn = page.get_by_role("link", name=re.compile(r"New\s+(Development|Task|Bug|Issue)", re.IGNORECASE))
             if await new_btn.count() == 0:
-                # Try fallback: any link containing New
                 new_btn = page.get_by_role("link", name=re.compile("New ", re.IGNORECASE))
             if await new_btn.count() == 0:
-                # Try fallback: any element containing New Development/Task etc.
-                new_btn = page.locator("a, button").filter(has_text=re.compile("New\\s+(Development|Task|Bug|Issue)", re.IGNORECASE))
+                new_btn = page.locator("a, button").filter(has_text=re.compile(r"New\s+(Development|Task|Bug|Issue)", re.IGNORECASE))
                 
             if await new_btn.count() == 0:
                 return "Error: Could not find 'New ...' button on the project page. Ensure the URL is correct (like Backlog/Issue list)."
                 
             await new_btn.first.click()
-            await page.wait_for_timeout(2000) # Wait for modal/page to load
+            await page.wait_for_timeout(2000)
             
             # Fill Title
             title_input = page.get_by_role("textbox", name=re.compile("^Title$", re.IGNORECASE))
             if await title_input.count() > 0:
                 await title_input.fill(title)
+            
+            # --- Select2 Dropdown helper ---
+            # These dropdowns show current value as textbox name (e.g., textbox named "New" for Workflow)
+            # To change: click the textbox → pick option from opened list
+            
+            # Workflow (default: "New") — only change if user specifies
+            if workflow:
+                # Try clicking the dropdown textbox for Workflow.
+                # The textbox is named by its current value (e.g. "New")
+                wf_textbox = page.get_by_role("textbox", name="New")
+                if await wf_textbox.count() > 0:
+                    await wf_textbox.click()
+                    await page.wait_for_timeout(500)
+                    option = page.get_by_role("option", name=re.compile(f"^{workflow}$", re.IGNORECASE))
+                    if await option.count() > 0:
+                        await option.first.click()
+                        await page.wait_for_timeout(500)
+            
+            # Task Type (default: "Development") — only change if user specifies
+            if task_type:
+                tt_textbox = page.get_by_role("textbox", name="Development")
+                if await tt_textbox.count() > 0:
+                    await tt_textbox.click()
+                    await page.wait_for_timeout(500)
+                    option = page.get_by_role("option", name=re.compile(f"^{task_type}$", re.IGNORECASE))
+                    if await option.count() > 0:
+                        await option.first.click()
+                        await page.wait_for_timeout(500)
+            
+            # Assign To (default: current user) — only change if user specifies
+            if assign_to:
+                # First remove current assignee by clicking ×
+                remove_btn = page.locator("span").filter(has_text=re.compile(r"×")).first
+                if await remove_btn.count() > 0:
+                    # Find the assignee-specific remove
+                    assign_container = page.locator(".select2-selection--multiple, .select2-selection--single").last
+                    if await assign_container.count() > 0:
+                        await assign_container.click()
+                        await page.wait_for_timeout(500)
+                
+                # Type to search and select the assignee
+                option = page.get_by_role("option", name=re.compile(assign_to, re.IGNORECASE))
+                if await option.count() > 0:
+                    await option.first.click()
+                    await page.wait_for_timeout(500)
+            
+            # Milestone (REQUIRED) — Select2 dropdown with placeholder "Select an option"
+            if milestone:
+                ms_textbox = page.get_by_role("textbox", name=re.compile(r"Select an option|Milestone", re.IGNORECASE))
+                if await ms_textbox.count() > 0:
+                    await ms_textbox.click()
+                    await page.wait_for_timeout(500)
+                    option = page.get_by_role("option", name=re.compile(milestone, re.IGNORECASE))
+                    if await option.count() > 0:
+                        await option.first.click()
+                        await page.wait_for_timeout(500)
+            
+            # Estimate Hours
+            if estimate_hours is not None:
+                est_input = page.get_by_role("spinbutton", name=re.compile("Estimate Hours", re.IGNORECASE))
+                if await est_input.count() > 0:
+                    await est_input.fill(str(estimate_hours))
+            
+            # Start Date
+            if start_date:
+                start_date = _normalize_date(start_date)
+                start_input = page.locator("#issueStartDate")
+                if await start_input.count() > 0:
+                    try:
+                        await start_input.fill(start_date)
+                    except Exception:
+                        await start_input.evaluate(f"el => {{ el.value = '{start_date}'; el.dispatchEvent(new Event('change')); }}")
+                else:
+                    start_container = page.locator("#frmIssue > div:nth-child(2) > div:nth-child(5)")
+                    if await start_container.count() > 0:
+                        await start_container.click()
+                        await page.wait_for_timeout(500)
+            
+            # Due Date
+            if due_date:
+                due_date = _normalize_date(due_date)
+                due_input = page.locator("#issueDueDate")
+                if await due_input.count() > 0:
+                    try:
+                        await due_input.fill(due_date)
+                    except Exception:
+                        await due_input.evaluate(f"el => {{ el.value = '{due_date}'; el.dispatchEvent(new Event('change')); }}")
+                else:
+                    # Fallback: click the Due Date container area
+                    due_container = page.locator("#frmIssue > div:nth-child(2) > div:nth-child(6)")
+                    if await due_container.count() > 0:
+                        await due_container.click()
+                        await page.wait_for_timeout(500)
             
             # Description
             if description:
@@ -321,6 +455,9 @@ async def create_task_action(project_url: str, base_url: str, title: str, descri
                 if await desc_input.count() > 0:
                     await desc_input.fill(description)
 
+            # Click somewhere neutral to close any open datepicker/dropdown
+            await page.locator("body").click(position={"x": 0, "y": 0})
+            await page.wait_for_timeout(500)
                     
             # Save
             save_btn = page.get_by_role("button", name=re.compile("Save", re.IGNORECASE))

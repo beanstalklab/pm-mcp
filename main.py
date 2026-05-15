@@ -65,6 +65,13 @@ async def read_custom_url(url_path: str) -> str:
     Reads a specific path from the task management system and returns its contents in Markdown.
     Useful when you find a link to a specific task (e.g., /tms_pm/Issue/1234) and want to load it.
     This pm have base_url is https://192.168.66.86:8618
+    
+    IMPORTANT - Project URLs:
+    - Task List URL: /tms_pm/Issue?PId=<project_id> - shows only the list of tasks.
+    - Overview URL: /tms_pm/Project/Detail/<project_id> - shows project info, description, goals, etc.
+    When the user asks about a PROJECT's information/details/overview, ALWAYS use the Overview URL (/tms_pm/Project/Detail/<id>), NOT the Task List URL.
+    You can derive the project_id from a Task List URL's PId parameter.
+    
     Args:
         url_path: The relative or absolute path to load (e.g., '/tms_pm/Issue/12345').
     """
@@ -118,17 +125,27 @@ async def tms_log_time(issue_url_path: str, hours: float, work_notes: str, date:
     return await log_time_action(full_url, base_url, hours, work_notes, date)
 
 @mcp.tool()
-async def tms_create_task(project_url_path: str, title: str, description: str = "") -> str:
+async def tms_create_task(project_url_path: str, title: str, description: str = "", 
+                          start_date: str = None, due_date: str = None, estimate_hours: float = None,
+                          workflow: str = None, task_type: str = None, assign_to: str = None,
+                          milestone: str = None) -> str:
     """
     Creates a new task in a specific project.
     Args:
         project_url_path: The relative or absolute path of the project list or sprint list where the 'New ...' button is present.
         title: Title of the new task.
         description: Optional description for the task.
+        start_date: Optional start date. Accepts common formats: DD/MM/YYYY, YYYY-MM-DD, DD-MM-YYYY (e.g., '20/04/2026'). Auto-converted internally.
+        due_date: Optional due date (same formats as start_date).
+        estimate_hours: Optional estimated hours for the task (e.g., 8.0).
+        workflow: Optional workflow status (default is 'New'). Options: 'New', 'In Progress', 'Resolved', 'Closed', 'Hold', 'Canceled', 'Re-Open'.
+        task_type: Optional task type (default is 'Development'). Options: 'Development', 'Support', 'Bug', etc.
+        assign_to: Optional assignee name (e.g., 'HungDM'). Defaults to current user if not specified.
+        milestone: REQUIRED. The milestone to assign this task to. Must match an existing milestone name in the project.
     """
     base_url = CONFIG.get("base_url")
     full_url = project_url_path if project_url_path.startswith("http") else urljoin(base_url, project_url_path)
-    return await create_task_action(full_url, base_url, title, description)
+    return await create_task_action(full_url, base_url, title, description, start_date, due_date, estimate_hours, workflow, task_type, assign_to, milestone)
 
 @mcp.tool()
 async def tms_delete_comment(issue_url_path: str) -> str:
