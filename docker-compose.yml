@@ -1,20 +1,18 @@
 services:
   mcp-server:
     build: .
-    image: tms-pm-mcp
-    container_name: tms-pm-mcp
-    # 'stdin_open' keeps the stdio open which is mandatory for MCP!
-    stdin_open: true
-    tty: false
-    env_file:
-      - .env
+    image: pm-mcp
+    container_name: pm-mcp
+    ports:
+      - "8000:8000"
+    environment:
+      - MCP_TRANSPORT=streamable-http
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8000
+    restart: unless-stopped
     volumes:
       - ./config.json:/app/config.json
-      # (Optional) Mount your local directory for development/hot-reloading
-      # - .:/app
-
-    # Note: If you want to run the Inspector web interface instead of generic standard I/O:
-    # Just uncomment the command below, and map port 5173
-    # command: ["npx", "-y", "@modelcontextprotocol/inspector", "uv", "run", "main.py"]
-    # ports:
-    #   - "5173:5173"
+      - .:/app
+      - /app/.venv
+    # Mỗi user truyền cookie riêng qua header x-tms-cookie
+    # Không cần SESSION_COOKIE trong env nữa

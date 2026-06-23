@@ -16,8 +16,14 @@ RUN uv sync
 RUN uv run playwright install --with-deps chromium
 
 # Copy the rest of the application files
-COPY . /app/
+# COPY . /app/
 
-# By default, MCP communicates via standard input/output (stdio)
-# We set this entrypoint so a client can execute the container to communicate.
+# Supports both stdio (local) and HTTP (multi-user) modes.
+# Set MCP_TRANSPORT=streamable-http for multi-user deployment.
+EXPOSE 8000
+
+ENV MCP_TRANSPORT=streamable-http
+ENV MCP_HOST=0.0.0.0
+ENV MCP_PORT=8000
+
 ENTRYPOINT ["uv", "run", "main.py"]

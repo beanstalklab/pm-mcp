@@ -29,12 +29,14 @@ def _normalize_date(date_str: str) -> str:
     # If no format matched, return as-is
     return date_str
 
-async def setup_browser_context(p, base_url: str) -> BrowserContext:
-    """Sets up an incognito browser context with cookies from environment."""
+async def setup_browser_context(p, base_url: str, session_cookie: str = None) -> tuple:
+    """Sets up browser context with per-user cookies.
+    Returns (context, browser) tuple — caller MUST close both.
+    """
     browser = await p.chromium.launch(headless=True)
     
-    # Parse cookie string securely
-    cookie_str = os.getenv("SESSION_COOKIE", "")
+    # Priority: explicit param > env fallback (backward compat for local dev)
+    cookie_str = session_cookie or os.getenv("SESSION_COOKIE", "")
     cookies = []
     if cookie_str:
         for item in cookie_str.split(';'):
@@ -52,7 +54,7 @@ async def setup_browser_context(p, base_url: str) -> BrowserContext:
     if cookies:
         await context.add_cookies(cookies)
         
-    return context
+    return context, browser
 
 def extract_tables_as_markdown(html_content: str) -> str:
     """Extracts tables/grids from HTML and converts them to Markdown."""
@@ -100,13 +102,13 @@ def extract_tables_as_markdown(html_content: str) -> str:
         
     return result_md.strip()
 
-async def fetch_page_markdown(url: str, base_url: str) -> str:
+async def fetch_page_markdown(url: str, base_url: str, session_cookie: str = None) -> str:
     """
     Fetches a URL using Playwright. 
     Detects tabs (nav-tabs), clicks each, and aggregates all table data.
     """
     async with async_playwright() as p:
-        context = await setup_browser_context(p, base_url)
+        context, browser = await setup_browser_context(p, base_url, session_cookie)
         page = await context.new_page()
         
         try:
@@ -175,11 +177,12 @@ async def fetch_page_markdown(url: str, base_url: str) -> str:
             return f"Error fetching page: {str(e)}"
         finally:
             await context.close()
+            await browser.close()
 
-async def add_comment_action(url: str, base_url: str, comment: str) -> str:
+async def add_comment_action(url: str, base_url: str, comment: str, session_cookie: str = None) -> str:
     """Adds a comment to a specific issue."""
     async with async_playwright() as p:
-        context = await setup_browser_context(p, base_url)
+        context, browser = await setup_browser_context(p, base_url, session_cookie)
         page = await context.new_page()
         try:
             logger.info(f"Adding comment to {url}")
@@ -223,11 +226,12 @@ async def add_comment_action(url: str, base_url: str, comment: str) -> str:
             return f"Error adding comment: {str(e)}"
         finally:
             await context.close()
+            await browser.close()
 
-async def change_status_action(url: str, base_url: str, status: str) -> str:
+async def change_status_action(url: str, base_url: str, status: str, session_cookie: str = None) -> str:
     """Clicks a status button on a specific issue page."""
     async with async_playwright() as p:
-        context = await setup_browser_context(p, base_url)
+        context, browser = await setup_browser_context(p, base_url, session_cookie)
         page = await context.new_page()
         try:
             logger.info(f"Changing status of {url} to {status}")
@@ -251,11 +255,12 @@ async def change_status_action(url: str, base_url: str, status: str) -> str:
             return f"Error changing status: {str(e)}"
         finally:
             await context.close()
+            await browser.close()
 
-async def log_time_action(url: str, base_url: str, hours: float, work_notes: str, date: str = None) -> str:
+async def log_time_action(url: str, base_url: str, hours: float, work_notes: str, date: str = None, session_cookie: str = None) -> str:
     """Logs time on a specific issue."""
     async with async_playwright() as p:
-        context = await setup_browser_context(p, base_url)
+        context, browser = await setup_browser_context(p, base_url, session_cookie)
         page = await context.new_page()
         try:
             logger.info(f"Logging {hours}h to {url}")
@@ -315,14 +320,15 @@ async def log_time_action(url: str, base_url: str, hours: float, work_notes: str
             return f"Error logging time: {str(e)}"
         finally:
             await context.close()
+            await browser.close()
 
 async def create_task_action(project_url: str, base_url: str, title: str, description: str = "", 
                              start_date: str = None, due_date: str = None, estimate_hours: float = None,
                              workflow: str = None, task_type: str = None, assign_to: str = None,
-                             milestone: str = None) -> str:
+                             milestone: str = None, session_cookie: str = None) -> str:
     """Creates a new task in a project."""
     async with async_playwright() as p:
-        context = await setup_browser_context(p, base_url)
+        context, browser = await setup_browser_context(p, base_url, session_cookie)
         page = await context.new_page()
         try:
             logger.info(f"Creating task '{title}' in {project_url}")
@@ -471,11 +477,12 @@ async def create_task_action(project_url: str, base_url: str, title: str, descri
             return f"Error creating task: {str(e)}"
         finally:
             await context.close()
+            await browser.close()
 
-async def delete_comment_action(url: str, base_url: str) -> str:
+async def delete_comment_action(url: str, base_url: str, session_cookie: str = None) -> str:
     """Deletes the latest comment on a specific issue."""
     async with async_playwright() as p:
-        context = await setup_browser_context(p, base_url)
+        context, browser = await setup_browser_context(p, base_url, session_cookie)
         page = await context.new_page()
         try:
             logger.info(f"Deleting comment on {url}")
@@ -510,11 +517,12 @@ async def delete_comment_action(url: str, base_url: str) -> str:
             return f"Error deleting comment: {str(e)}"
         finally:
             await context.close()
+            await browser.close()
 
-async def edit_description_action(url: str, base_url: str, description: str) -> str:
+async def edit_description_action(url: str, base_url: str, description: str, session_cookie: str = None) -> str:
     """Edits the description of an existing issue."""
     async with async_playwright() as p:
-        context = await setup_browser_context(p, base_url)
+        context, browser = await setup_browser_context(p, base_url, session_cookie)
         page = await context.new_page()
         try:
             logger.info(f"Editing description for {url}")
@@ -560,5 +568,6 @@ async def edit_description_action(url: str, base_url: str, description: str) -> 
             return f"Error editing description: {str(e)}"
         finally:
             await context.close()
+            await browser.close()
 
 

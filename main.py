@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from urllib.parse import urljoin
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
@@ -14,8 +15,21 @@ from browser_utils import (
     edit_description_action
 )
 
+def _get_session_cookie() -> str:
+    """Get per-user TMS cookie from HTTP header, fallback to env."""
+    try:
+        from fastmcp.server.dependencies import get_http_headers
+        headers = get_http_headers()
+        cookie = headers.get("x-tms-cookie", "")
+        if cookie:
+            return cookie
+    except Exception:
+        pass  # Not in HTTP transport (stdio mode)
+    return os.getenv("SESSION_COOKIE", "")
+
 # Load environment variables
-load_dotenv()
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(_SCRIPT_DIR, ".env"))
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -23,14 +37,16 @@ logger = logging.getLogger(__name__)
 
 # Load configuration
 try:
-    with open("config.json", "r") as f:
+    _config_path = os.path.join(_SCRIPT_DIR, "config.json")
+    with open(_config_path, "r") as f:
         CONFIG = json.load(f)
 except FileNotFoundError:
     logger.warning("config.json not found. Using empty config.")
     CONFIG = {"base_url": "", "views": {}}
 
 # Create FastMCP server
-mcp = FastMCP("pm-mcp")
+host = os.getenv("MCP_HOST", "0.0.0.0")
+mcp = FastMCP("pm-mcp", host=host)
 
 @mcp.tool()
 async def list_views() -> str:
@@ -46,8 +62,6 @@ async def read_view(view_name: str) -> str:
     Reads a predefined view from the task management system and returns its contents in Markdown format.
     Args:
         view_name: The name of the view to read (e.g., 'My Tasks', 'All Projects'). Get available views using list_views().
-        
-    Name user: HungDM
     """
     views = CONFIG.get("views", {})
     if view_name not in views:
@@ -57,14 +71,13 @@ async def read_view(view_name: str) -> str:
     url_path = views[view_name]
     full_url = urljoin(base_url, url_path)
     
-    return await fetch_page_markdown(full_url, base_url)
+    return await fetch_page_markdown(full_url, base_url, session_cookie=_get_session_cookie())
 
 @mcp.tool()
 async def read_custom_url(url_path: str) -> str:
     """
     Reads a specific path from the task management system and returns its contents in Markdown.
     Useful when you find a link to a specific task (e.g., /tms_pm/Issue/1234) and want to load it.
-    This pm have base_url is https://192.168.66.86:8618
     
     IMPORTANT - Project URLs:
     - Task List URL: /tms_pm/Issue?PId=<project_id> - shows only the list of tasks.
@@ -82,7 +95,7 @@ async def read_custom_url(url_path: str) -> str:
     else:
         full_url = urljoin(base_url, url_path)
         
-    return await fetch_page_markdown(full_url, base_url)
+    return await fetch_page_markdown(full_url, base_url, session_cookie=_get_session_cookie())
 
 @mcp.tool()
 async def tms_add_comment(issue_url_path: str, comment: str) -> str:
@@ -96,7 +109,7 @@ async def tms_add_comment(issue_url_path: str, comment: str) -> str:
     """
     base_url = CONFIG.get("base_url")
     full_url = issue_url_path if issue_url_path.startswith("http") else urljoin(base_url, issue_url_path)
-    return await add_comment_action(full_url, base_url, comment)
+    return await add_comment_action(full_url, base_url, comment, session_cookie=_get_session_cookie())
 
 @mcp.tool()
 async def tms_change_status(issue_url_path: str, status: str) -> str:
@@ -108,7 +121,7 @@ async def tms_change_status(issue_url_path: str, status: str) -> str:
     """
     base_url = CONFIG.get("base_url")
     full_url = issue_url_path if issue_url_path.startswith("http") else urljoin(base_url, issue_url_path)
-    return await change_status_action(full_url, base_url, status)
+    return await change_status_action(full_url, base_url, status, session_cookie=_get_session_cookie())
 
 @mcp.tool()
 async def tms_log_time(issue_url_path: str, hours: float, work_notes: str, date: str = None) -> str:
@@ -122,7 +135,7 @@ async def tms_log_time(issue_url_path: str, hours: float, work_notes: str, date:
     """
     base_url = CONFIG.get("base_url")
     full_url = issue_url_path if issue_url_path.startswith("http") else urljoin(base_url, issue_url_path)
-    return await log_time_action(full_url, base_url, hours, work_notes, date)
+    return await log_time_action(full_url, base_url, hours, work_notes, date, session_cookie=_get_session_cookie())
 
 @mcp.tool()
 async def tms_create_task(project_url_path: str, title: str, description: str = "", 
@@ -145,7 +158,7 @@ async def tms_create_task(project_url_path: str, title: str, description: str = 
     """
     base_url = CONFIG.get("base_url")
     full_url = project_url_path if project_url_path.startswith("http") else urljoin(base_url, project_url_path)
-    return await create_task_action(full_url, base_url, title, description, start_date, due_date, estimate_hours, workflow, task_type, assign_to, milestone)
+    return await create_task_action(full_url, base_url, title, description, start_date, due_date, estimate_hours, workflow, task_type, assign_to, milestone, session_cookie=_get_session_cookie())
 
 @mcp.tool()
 async def tms_delete_comment(issue_url_path: str) -> str:
@@ -156,7 +169,7 @@ async def tms_delete_comment(issue_url_path: str) -> str:
     """
     base_url = CONFIG.get("base_url")
     full_url = issue_url_path if issue_url_path.startswith("http") else urljoin(base_url, issue_url_path)
-    return await delete_comment_action(full_url, base_url)
+    return await delete_comment_action(full_url, base_url, session_cookie=_get_session_cookie())
 
 @mcp.tool()
 async def tms_edit_description(issue_url_path: str, description: str) -> str:
@@ -170,7 +183,15 @@ async def tms_edit_description(issue_url_path: str, description: str) -> str:
     """
     base_url = CONFIG.get("base_url")
     full_url = issue_url_path if issue_url_path.startswith("http") else urljoin(base_url, issue_url_path)
-    return await edit_description_action(full_url, base_url, description)
+    return await edit_description_action(full_url, base_url, description, session_cookie=_get_session_cookie())
 
 if __name__ == "__main__":
-    mcp.run()
+    transport = os.getenv("MCP_TRANSPORT", "stdio")
+    if transport == "stdio":
+        mcp.run()
+    else:
+        import uvicorn
+        app = mcp.sse_app()
+        host = os.getenv("MCP_HOST", "0.0.0.0")
+        port = int(os.getenv("MCP_PORT", "8000"))
+        uvicorn.run(app, host=host, port=port)
